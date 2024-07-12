@@ -1,0 +1,1271 @@
+
+<!DOCTYPE html>
+
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>cplpy &#8212; cpl-library 2.0 documentation</title><link rel="stylesheet" href="/styles.css"><link rel="shortcut icon" href="/cpl_logo.ico"> 
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css" />
+    <link rel="stylesheet" type="text/css" href="../_static/alabaster.css" />
+    <link rel="stylesheet" href="../_static/css/functions.css" type="text/css" />
+    <script data-url_root="../" id="documentation_options" src="../_static/documentation_options.js"></script>
+    <script src="../_static/jquery.js"></script>
+    <script src="../_static/underscore.js"></script>
+    <script src="../_static/doctools.js"></script>
+    <link rel="index" title="Index" href="../genindex.shtml" />
+    <link rel="search" title="Search" href="../search.shtml" />
+   
+  <link rel="stylesheet" href="../_static/custom.css" type="text/css" />
+  
+  
+  <meta name="viewport" content="width=device-width, initial-scale=0.9, maximum-scale=0.9" />
+
+  </head><body><div class="center"><!--#include virtual="/nav.html"-->
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for cplpy</h1><div class="highlight"><pre>
+<span></span>
+<span class="kn">from</span> <span class="nn">ctypes</span> <span class="k">import</span> <span class="n">c_char_p</span><span class="p">,</span> <span class="n">c_char</span><span class="p">,</span> <span class="n">c_int</span><span class="p">,</span> <span class="n">c_double</span><span class="p">,</span> <span class="n">c_bool</span><span class="p">,</span> <span class="n">c_void_p</span><span class="p">,</span> <span class="n">byref</span><span class="p">,</span> <span class="n">POINTER</span><span class="p">,</span> <span class="n">util</span><span class="p">,</span> <span class="n">pointer</span><span class="p">,</span> <span class="n">cdll</span>
+<span class="kn">import</span> <span class="nn">ctypes</span>
+<span class="kn">import</span> <span class="nn">mpi4py</span>
+<span class="kn">from</span> <span class="nn">distutils.version</span> <span class="k">import</span> <span class="n">StrictVersion</span>
+<span class="kn">from</span> <span class="nn">mpi4py</span> <span class="k">import</span> <span class="n">MPI</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">numpy.ctypeslib</span> <span class="k">import</span> <span class="n">ndpointer</span><span class="p">,</span> <span class="n">load_library</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="k">import</span> <span class="n">wraps</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">subprocess</span> <span class="k">as</span> <span class="nn">sp</span>
+<span class="kn">from</span> <span class="nn">subprocess</span> <span class="k">import</span> <span class="n">STDOUT</span><span class="p">,</span> <span class="n">check_output</span><span class="p">,</span> <span class="n">CalledProcessError</span>
+<span class="kn">import</span> <span class="nn">shutil</span>
+<span class="kn">import</span> <span class="nn">pickle</span>
+<span class="kn">import</span> <span class="nn">errno</span>
+
+
+<span class="n">__all__</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;CPL&quot;</span><span class="p">,</span> <span class="s2">&quot;cart_create&quot;</span><span class="p">,</span> <span class="s2">&quot;run_test&quot;</span><span class="p">,</span> <span class="s2">&quot;prepare_config&quot;</span><span class="p">,</span> <span class="s2">&quot;parametrize_file&quot;</span><span class="p">]</span>
+
+
+<span class="c1">#class OpenMPI_Not_Supported(Exception):</span>
+<span class="c1">#    pass</span>
+
+<span class="k">class</span> <span class="nc">CPLLibraryNotFound</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+<span class="k">class</span> <span class="nc">mpi4py_version_error</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+
+<span class="c1"># TODO: Raise exception of library not loaded</span>
+<span class="n">_loaded</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="c1"># All Python types except integers, strings, and unicode strings have to be</span>
+<span class="c1"># wrapped in their corresponding ctypes type, so that they can be converted</span>
+<span class="c1"># to the required C</span>
+
+<span class="n">_CPL_GET_VARS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;icmin_olap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;jcmin_olap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;kcmin_olap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;icmax_olap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;jcmax_olap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;kcmax_olap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;icmin_cnst&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;jcmin_cnst&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;kcmin_cnst&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;icmax_cnst&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;jcmax_cnst&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;kcmax_cnst&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;icmin_bnry&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;jcmin_bnry&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;kcmin_bnry&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;icmax_bnry&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;jcmax_bnry&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;kcmax_bnry&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;ncx&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;ncy&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;ncz&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;npx_md&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;npy_md&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;npz_md&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;npx_cfd&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;npy_cfd&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;npz_cfd&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;overlap&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;xl_md&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span> <span class="s2">&quot;yl_md&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span>
+                 <span class="s2">&quot;nsteps_md&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;nsteps_cfd&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span> <span class="s2">&quot;nsteps_coupled&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">,</span>
+                 <span class="s2">&quot;zl_md&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span> <span class="s2">&quot;xl_cfd&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span> <span class="s2">&quot;yl_cfd&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span>
+                 <span class="s2">&quot;zl_cfd&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span> <span class="s2">&quot;dx&quot;</span> <span class="p">:</span> <span class="n">c_double</span><span class="p">,</span> <span class="s2">&quot;dy&quot;</span> <span class="p">:</span> <span class="n">c_double</span><span class="p">,</span> <span class="s2">&quot;dz&quot;</span> <span class="p">:</span> <span class="n">c_double</span><span class="p">,</span>
+                 <span class="s2">&quot;x_orig_cfd&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span><span class="s2">&quot;y_orig_cfd&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span><span class="s2">&quot;z_orig_cfd&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span>
+                 <span class="s2">&quot;x_orig_md&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span><span class="s2">&quot;y_orig_md&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span><span class="s2">&quot;z_orig_md&quot;</span><span class="p">:</span> <span class="n">c_double</span><span class="p">,</span>
+                 <span class="s2">&quot;timestep_ratio&quot;</span><span class="p">:</span> <span class="n">c_int</span>
+                 <span class="p">}</span>
+
+<span class="n">_CPL_SET_VARS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;output_mode&quot;</span><span class="p">:</span> <span class="n">c_int</span><span class="p">}</span>
+
+<span class="n">_CPL_FILE_VARS_TYPES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;CPL_INT&quot;</span><span class="p">,</span> <span class="s2">&quot;CPL_DOUBLE&quot;</span><span class="p">,</span> <span class="s2">&quot;CPL_INT_ARRAY&quot;</span><span class="p">,</span> <span class="s2">&quot;CPL_DOUBLE_ARRAY&quot;</span><span class="p">}</span>
+
+<span class="k">class</span> <span class="nc">CPL_VAR_TYPES</span><span class="p">():</span>
+    <span class="n">INT</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">DOUBLE</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">BOOL</span> <span class="o">=</span> <span class="mi">3</span>
+    <span class="n">STRING</span> <span class="o">=</span> <span class="mi">4</span>
+    <span class="n">INT_ARRAY</span> <span class="o">=</span> <span class="mi">5</span>
+    <span class="n">DOUBLE_ARRAY</span> <span class="o">=</span> <span class="mi">6</span>
+    <span class="n">BOOL_ARRAY</span> <span class="o">=</span> <span class="mi">7</span>
+    <span class="n">STRING_ARRAY</span> <span class="o">=</span> <span class="mi">8</span>
+
+
+<span class="n">_CPL_GET_FILE_VARS</span> <span class="o">=</span> <span class="p">{</span><span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">DOUBLE</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_real_param&quot;</span><span class="p">,</span> <span class="n">c_double</span><span class="p">),</span> 
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">DOUBLE_ARRAY</span><span class="p">:(</span><span class="s2">&quot;get_real_array_param&quot;</span><span class="p">,</span> <span class="n">POINTER</span><span class="p">(</span><span class="n">c_double</span><span class="p">)),</span>
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">INT</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_int_param&quot;</span><span class="p">,</span> <span class="n">c_int</span><span class="p">),</span> 
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">INT_ARRAY</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_int_array_param&quot;</span><span class="p">,</span> <span class="n">POINTER</span><span class="p">(</span><span class="n">c_int</span><span class="p">)),</span>
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">BOOL</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_boolean_param&quot;</span><span class="p">,</span> <span class="n">c_bool</span><span class="p">),</span> 
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">BOOL_ARRAY</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_boolean_array_param&quot;</span><span class="p">,</span> <span class="n">POINTER</span><span class="p">(</span><span class="n">c_bool</span><span class="p">)),</span>
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">STRING</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_string_param&quot;</span><span class="p">,</span> <span class="n">c_char_p</span><span class="p">),</span> 
+                      <span class="n">CPL_VAR_TYPES</span><span class="o">.</span><span class="n">STRING_ARRAY</span><span class="p">:</span> <span class="p">(</span><span class="s2">&quot;get_string_array_param&quot;</span><span class="p">,</span> <span class="n">POINTER</span><span class="p">(</span><span class="n">c_char_p</span><span class="p">))}</span>
+<span class="c1"># Decorator to abort all processes if an exception is thrown. This</span>
+<span class="c1"># avoids getting blocked when the exception do not occurs in every</span>
+<span class="c1"># process.</span>
+<span class="k">def</span> <span class="nf">abortMPI</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
+    <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">handleExcepts</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">retval</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">retval</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="nb">print</span> <span class="p">(</span><span class="n">e</span><span class="p">)</span>
+            <span class="c1"># Dirty workaround to let the output be printed.</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+            <span class="n">MPI</span><span class="o">.</span><span class="n">COMM_WORLD</span><span class="o">.</span><span class="n">Abort</span><span class="p">(</span><span class="n">errorcode</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">retval</span>
+    <span class="k">return</span> <span class="n">handleExcepts</span>
+
+
+<div class="viewcode-block" id="CPL"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL">[docs]</a><span class="k">class</span> <span class="nc">CPL</span><span class="p">:</span>
+    <span class="c1"># Shared attribute containing the library</span>
+    <span class="n">CFD_REALM</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">MD_REALM</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">GATHER_SCATTER</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="n">SEND_RECEIVE</span> <span class="o">=</span> <span class="mi">2</span>
+    <span class="n">NULL_REALM</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">_libname</span> <span class="o">=</span> <span class="s2">&quot;libcpl&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_lib_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">&quot;CPL_LIBRARY_PATH&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">_lib_path</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span><span class="o">+</span> <span class="n">_libname</span> <span class="o">+</span> <span class="s2">&quot;.so&quot;</span><span class="p">):</span>
+            <span class="n">_cpl_lib</span> <span class="o">=</span> <span class="n">load_library</span><span class="p">(</span><span class="n">_libname</span><span class="p">,</span> <span class="n">_lib_path</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">CPLLibraryNotFound</span><span class="p">(</span><span class="s2">&quot;Compiled CPL library libcpl.so not found at &quot;</span> <span class="o">+</span> <span class="n">_lib_path</span> <span class="o">+</span> <span class="s2">&quot;/&quot;</span><span class="o">+</span> <span class="n">_libname</span> <span class="o">+</span> <span class="s2">&quot;.so&quot;</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">KeyError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;CPL info: &quot;</span><span class="p">,</span> <span class="s2">&quot;CPL_LIBRARY_PATH not defined. Looking in system directories...&quot;</span><span class="p">))</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">_cpl_lib</span> <span class="o">=</span> <span class="n">cdll</span><span class="o">.</span><span class="n">LoadLibrary</span><span class="p">(</span><span class="n">_libname</span> <span class="o">+</span> <span class="s2">&quot;.so&quot;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;CPL info: &quot;</span><span class="p">,</span> <span class="s2">&quot;Success!&quot;</span><span class="p">))</span>
+        <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">CPLLibraryNotFound</span><span class="p">(</span><span class="s2">&quot;Library libcpl.so not found!&quot;</span><span class="p">)</span>
+            <span class="c1">#TODO: Check this</span>
+            <span class="c1">#time.sleep(2)</span>
+            <span class="c1">#MPI.COMM_WORLD.Abort(errorcode=1)</span>
+
+    <span class="c1"># Check for JSON support by cheking if load_param_file symbol exists</span>
+    <span class="n">JSON_SUPPORT</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_load_param_file</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="n">JSON_SUPPORT</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_var</span> <span class="o">=</span> <span class="n">POINTER</span><span class="p">(</span><span class="n">POINTER</span><span class="p">(</span><span class="n">c_char_p</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">realm</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="c1"># py_test_python function</span>
+    <span class="n">py_test_python</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_test_python</span>
+    <span class="n">py_test_python</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">c_int</span><span class="p">,</span>
+         <span class="n">c_double</span><span class="p">,</span>
+         <span class="n">c_bool</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>  <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">2</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">test_python</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">int_p</span><span class="p">,</span> <span class="n">doub_p</span><span class="p">,</span> <span class="n">bool_p</span><span class="p">,</span> <span class="n">int_pptr</span><span class="p">,</span> <span class="n">doub_pptr</span><span class="p">):</span>
+        <span class="n">int_pptr_dims</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">int_pptr</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">doub_pptr_dims</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">doub_pptr</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_test_python</span><span class="p">(</span><span class="n">int_p</span><span class="p">,</span> <span class="n">doub_p</span><span class="p">,</span> <span class="n">bool_p</span><span class="p">,</span> <span class="n">int_pptr</span><span class="p">,</span> <span class="n">doub_pptr</span><span class="p">,</span>
+                            <span class="n">int_pptr_dims</span><span class="p">,</span> <span class="n">doub_pptr_dims</span><span class="p">)</span>
+
+    <span class="c1">#NOTE: Using CPLC_init_Fort and Comm.f2py() and Comm.py2f() we achieve integration</span>
+    <span class="c1">#      with MPICH and OpenMPI seamlessly. mpi4py &gt;= 2.0.0 is needed.</span>
+    <span class="k">if</span> <span class="n">StrictVersion</span><span class="p">(</span><span class="n">mpi4py</span><span class="o">.</span><span class="n">__version__</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">StrictVersion</span><span class="p">(</span><span class="s1">&#39;2.0.0&#39;</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="n">mpi4py_version_error</span><span class="p">(</span><span class="s2">&quot;Comm.f2py() and Comm.py2f()&quot;</span> <span class="o">+</span> 
+                                   <span class="s2">&quot; require mpi4py &gt;= 2.0.0&quot;</span><span class="p">)</span>
+
+    <span class="c1">#Detect if OpenMPI or MPICH</span>
+    <span class="n">mpicc</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">mpi4py</span><span class="o">.</span><span class="n">get_config</span><span class="p">()[</span><span class="s1">&#39;mpicc&#39;</span><span class="p">])</span>
+    <span class="n">mpishow</span><span class="o">=</span><span class="n">sp</span><span class="o">.</span><span class="n">check_output</span><span class="p">([</span><span class="s2">&quot;mpicc&quot;</span><span class="p">,</span><span class="s2">&quot;-show&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="p">(</span><span class="s2">&quot;open&quot;</span> <span class="ow">in</span> <span class="n">mpicc</span> <span class="ow">or</span> <span class="s2">&quot;open&quot;</span> <span class="ow">in</span> <span class="n">mpishow</span><span class="p">):</span>
+        <span class="n">MPI_version</span> <span class="o">=</span> <span class="s2">&quot;OPENMPI&quot;</span>
+        <span class="n">ompi_info</span> <span class="o">=</span> <span class="n">sp</span><span class="o">.</span><span class="n">check_output</span><span class="p">(</span><span class="s2">&quot;ompi_info&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">ompi_info</span><span class="p">:</span>
+            <span class="k">if</span> <span class="p">(</span><span class="s2">&quot;Open MPI:&quot;</span> <span class="ow">in</span> <span class="n">m</span><span class="p">):</span>
+                <span class="n">ompi_major_version_no</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;:&quot;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s2">&quot;.&quot;</span><span class="p">)[</span><span class="mi">0</span><span class="p">])</span>            
+    <span class="k">elif</span> <span class="p">(</span><span class="s2">&quot;mpich&quot;</span> <span class="ow">in</span> <span class="n">mpicc</span> <span class="ow">or</span> <span class="s2">&quot;mpich&quot;</span> <span class="ow">in</span> <span class="n">mpishow</span><span class="p">):</span>
+        <span class="n">MPI_version</span> <span class="o">=</span> <span class="s2">&quot;MPICH&quot;</span>      
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;UNKNOWN MPI VERSION FROM &quot;</span><span class="p">,</span> <span class="n">mpicc</span><span class="p">))</span>
+        <span class="n">MPI_version</span> <span class="o">=</span> <span class="s2">&quot;UNKNOWN&quot;</span>
+
+    <span class="n">_py_init</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_init_Fort</span>
+    <span class="n">_py_init</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">c_int</span><span class="p">,</span> <span class="n">POINTER</span><span class="p">(</span><span class="n">c_int</span><span class="p">)]</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+<div class="viewcode-block" id="CPL.init"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.init">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">init</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">calling_realm</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            (cfd+md) Splits MPI_COMM_WORLD in both the CFD and MD code respectively </span>
+<span class="sd">            and create intercommunicator between CFD and MD</span>
+<span class="sd">            </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">            </span>
+<span class="sd">            Assumes MPI has been initialised `MPI_init` and communicator MPI_COMM_WORLD exists</span>
+<span class="sd">            and contains all processors in both CFD and MD regions</span>
+<span class="sd">            </span>
+<span class="sd">            </span>
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">            </span>
+<span class="sd">              CPL.init(callingrealm)    </span>
+<span class="sd">            </span>
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - *callingrealm*</span>
+<span class="sd">            </span>
+<span class="sd">               - Should identify calling processor as either CFD_REALM (integer with value 1) or MD_REALM (integer with value 2).</span>
+<span class="sd">             </span>
+<span class="sd">            </span>
+<span class="sd">            **Outputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - RETURNED_REALM_COMM </span>
+<span class="sd">            </span>
+<span class="sd">               - Communicator based on callingrealm value local to CFD or MD processor and resulting from the split of MPI_COMM_WORLD</span>
+<span class="sd">            </span>
+<span class="sd">            **Example**</span>
+<span class="sd">            </span>
+<span class="sd">            .. literalinclude:: ../../../examples/cpl_init/md_init.py           </span>
+<span class="sd">            </span>
+<span class="sd">            **Errors**</span>
+<span class="sd">            </span>
+<span class="sd">                COUPLER_ERROR_REALM  = 1                    wrong realm value</span>
+<span class="sd">                COUPLER_ERROR_ONE_REALM = 2                 one realm missing</span>
+<span class="sd">                COUPLER_ERROR_INIT = 3         ! initialisation error</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">realm</span> <span class="o">=</span> <span class="n">calling_realm</span>
+        <span class="n">MPI_Comm_int</span> <span class="o">=</span> <span class="n">c_int</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_py_init</span><span class="p">(</span><span class="n">calling_realm</span><span class="p">,</span> <span class="n">byref</span><span class="p">(</span><span class="n">MPI_Comm_int</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">COMM</span> <span class="o">=</span> <span class="n">MPI</span><span class="o">.</span><span class="n">Comm</span><span class="o">.</span><span class="n">f2py</span><span class="p">(</span><span class="n">MPI_Comm_int</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">COMM</span> </div>
+
+
+    <span class="k">if</span> <span class="n">JSON_SUPPORT</span><span class="p">:</span>
+        <span class="n">_py_load_param_file</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_load_param_file</span>
+        <span class="n">_py_load_param_file</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">c_char_p</span><span class="p">]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">load_param_file</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">fname</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_py_load_param_file</span><span class="p">(</span><span class="n">c_char_p</span><span class="p">(</span><span class="n">fname</span><span class="p">),</span> <span class="n">c_int</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">fname</span><span class="p">)))</span>
+
+
+    <span class="k">if</span> <span class="n">JSON_SUPPORT</span><span class="p">:</span>
+        <span class="n">_py_close_param_file</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_close_param_file</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">close_param_file</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_py_close_param_file</span><span class="p">()</span>
+
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get_file_var</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">section</span><span class="p">,</span> <span class="n">var_name</span><span class="p">,</span> <span class="n">var_type</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">fun_name</span> <span class="o">=</span> <span class="n">_CPL_GET_FILE_VARS</span><span class="p">[</span><span class="n">var_type</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span>
+            <span class="n">var_ctype</span> <span class="o">=</span> <span class="n">_CPL_GET_FILE_VARS</span><span class="p">[</span><span class="n">var_type</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span>
+
+            <span class="n">fun</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cpl_lib</span><span class="p">,</span> <span class="s2">&quot;CPLC_&quot;</span> <span class="o">+</span> <span class="n">fun_name</span><span class="p">)</span>
+            <span class="n">fun</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span>  <span class="p">[</span><span class="n">c_char_p</span><span class="p">,</span>
+                             <span class="n">c_char_p</span><span class="p">,</span>
+                             <span class="n">POINTER</span><span class="p">(</span><span class="n">var_ctype</span><span class="p">)]</span>
+
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;CPL-ERROR: CPL Library function &#39;&quot;</span> <span class="o">+</span>
+                   <span class="nb">str</span><span class="p">(</span><span class="n">fun_name</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;&#39; not found!&quot;</span><span class="p">))</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_var</span> <span class="o">=</span> <span class="n">var_ctype</span><span class="p">()</span>
+
+            <span class="k">if</span> <span class="p">(</span><span class="s2">&quot;array&quot;</span> <span class="ow">in</span> <span class="n">fun_name</span><span class="p">):</span>
+                <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;ENTRO&quot;</span><span class="p">)</span>
+                <span class="n">var_len</span> <span class="o">=</span> <span class="n">c_int</span><span class="p">()</span>
+                <span class="n">fun</span><span class="o">.</span><span class="n">argtypes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">POINTER</span><span class="p">(</span><span class="n">c_int</span><span class="p">))</span>
+                <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;EY&quot;</span><span class="p">)</span>
+                <span class="n">fun</span><span class="p">(</span><span class="n">c_char_p</span><span class="p">(</span><span class="n">section</span><span class="p">),</span> <span class="n">c_char_p</span><span class="p">(</span><span class="n">var_name</span><span class="p">),</span> <span class="n">byref</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_var</span><span class="p">),</span> <span class="n">byref</span><span class="p">(</span><span class="n">var_len</span><span class="p">))</span>
+                <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;len:&quot;</span> <span class="p">,</span> <span class="n">var_len</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+                <span class="c1">#print (self._var[0])</span>
+                <span class="c1">#print (byref(var[0]))</span>
+                <span class="n">a</span> <span class="o">=</span> <span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">_var</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">var_len</span><span class="o">.</span><span class="n">value</span><span class="p">)])</span>
+                <span class="k">return</span> <span class="n">a</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">fun</span><span class="p">(</span><span class="n">c_char_p</span><span class="p">(</span><span class="n">section</span><span class="p">),</span> <span class="n">c_char_p</span><span class="p">(</span><span class="n">var_name</span><span class="p">),</span> <span class="n">byref</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_var</span><span class="p">))</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_var</span><span class="o">.</span><span class="n">value</span>
+    <span class="n">_py_finalize</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_finalize</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">finalize</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_py_finalize</span><span class="p">()</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_setup_cfd</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_setup_cfd_Fort</span>
+
+    <span class="n">py_setup_cfd</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">c_int</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+<div class="viewcode-block" id="CPL.setup_cfd"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.setup_cfd">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">setup_cfd</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">icomm_grid</span><span class="p">,</span> <span class="n">xyzL</span><span class="p">,</span> 
+                        <span class="n">xyz_orig</span><span class="p">,</span> <span class="n">ncxyz</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            Initialisation routine for coupler module - Every variable is sent and stored</span>
+<span class="sd">            to ensure both md and cfd region have an identical list of parameters</span>
+<span class="sd">           </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">            </span>
+<span class="sd">            Assumes CPL has been initialised `CPL.init` and communicator MD_REALM exists</span>
+
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">            </span>
+<span class="sd">              CPL.setup_cfd(icomm_grid, xyzL, xyz_orig, ncxyz)</span>
+<span class="sd">            </span>
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - *icomm_grid*</span>
+<span class="sd">            </span>
+<span class="sd">               - Communicator based on CFD processor topology returned from a call to MPI_CART_CREATE.</span>
+<span class="sd">             - *xyzL*</span>
+<span class="sd">            </span>
+<span class="sd">               - CFD domain size.</span>
+<span class="sd">             - *xyz_orig*</span>
+<span class="sd">            </span>
+<span class="sd">               - CFD origin.</span>
+<span class="sd">             - *ncxyz*</span>
+<span class="sd">            </span>
+<span class="sd">               - Number of CFD cells in global domain.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="k">if</span> <span class="p">(</span>  <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">icomm_grid</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">icomm_grid</span><span class="p">)</span> <span class="ow">is</span> <span class="mi">3</span><span class="p">))</span>
+           <span class="ow">or</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">icomm_grid</span><span class="p">)</span> <span class="ow">is</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">icomm_grid</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">is</span> <span class="mi">3</span><span class="p">))):</span>
+            <span class="n">icomm_grid</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">COMM</span><span class="o">.</span><span class="n">Create_cart</span><span class="p">([</span><span class="n">icomm_grid</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> 
+                                                <span class="n">icomm_grid</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> 
+                                                <span class="n">icomm_grid</span><span class="p">[</span><span class="mi">2</span><span class="p">]])</span>
+
+        <span class="k">if</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">xyzL</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="n">xyzL</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="ow">not</span> <span class="n">xyzL</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;F_CONTIGUOUS&quot;</span><span class="p">])):</span>
+            <span class="n">xyzL</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">xyzL</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">xyz_orig</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="n">xyz_orig</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="ow">not</span> <span class="n">xyz_orig</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;F_CONTIGUOUS&quot;</span><span class="p">])):</span>
+            <span class="n">xyz_orig</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">xyz_orig</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">ncxyz</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="n">ncxyz</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="ow">not</span> <span class="n">ncxyz</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;F_CONTIGUOUS&quot;</span><span class="p">])):</span>
+            <span class="n">ncxyz</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">ncxyz</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_setup_cfd</span><span class="p">(</span><span class="n">icomm_grid</span><span class="o">.</span><span class="n">py2f</span><span class="p">(),</span> <span class="n">xyzL</span><span class="p">,</span>
+                          <span class="n">xyz_orig</span><span class="p">,</span> <span class="n">ncxyz</span><span class="p">)</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+
+    <span class="n">py_setup_md</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_setup_md_Fort</span>
+
+    <span class="n">py_setup_md</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">c_int</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+<div class="viewcode-block" id="CPL.setup_md"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.setup_md">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">setup_md</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">icomm_grid</span><span class="p">,</span> <span class="n">xyzL</span><span class="p">,</span> <span class="n">xyz_orig</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            Initialisation routine for coupler module - Every variable is sent and stored</span>
+<span class="sd">            to ensure both md and cfd region have an identical list of parameters</span>
+<span class="sd">            </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">            </span>
+<span class="sd">            Assumes CPL has been initialised `CPL.init` and communicator MD_REALM exists</span>
+<span class="sd">            </span>
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">            </span>
+<span class="sd">              CPL.md_init(icomm_grid, xyzL, xyz_orig)</span>
+<span class="sd">            </span>
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - *icomm_grid*</span>
+<span class="sd">            </span>
+<span class="sd">               - Communicator based on MD processor topology returned from a call to MPI_CART_CREATE.</span>
+<span class="sd">             - *xyzL*</span>
+<span class="sd">            </span>
+<span class="sd">               - MD domain size.</span>
+<span class="sd">             - *xyz_orig*</span>
+<span class="sd">            </span>
+<span class="sd">               - MD origin.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="p">(</span>  <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">icomm_grid</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">icomm_grid</span><span class="p">)</span> <span class="ow">is</span> <span class="mi">3</span><span class="p">))</span>
+           <span class="ow">or</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">icomm_grid</span><span class="p">)</span> <span class="ow">is</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">icomm_grid</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">is</span> <span class="mi">3</span><span class="p">))):</span>
+            <span class="n">icomm_grid</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">COMM</span><span class="o">.</span><span class="n">Create_cart</span><span class="p">([</span><span class="n">icomm_grid</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> 
+                                                <span class="n">icomm_grid</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> 
+                                                <span class="n">icomm_grid</span><span class="p">[</span><span class="mi">2</span><span class="p">]])</span>
+
+        <span class="k">if</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">xyzL</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="n">xyzL</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="ow">not</span> <span class="n">xyzL</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;F_CONTIGUOUS&quot;</span><span class="p">])):</span>
+            <span class="n">xyzL</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">xyzL</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">((</span><span class="nb">type</span><span class="p">(</span><span class="n">xyz_orig</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="n">xyz_orig</span><span class="o">.</span><span class="n">dtype</span> <span class="o">!=</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span> <span class="ow">or</span> 
+            <span class="p">(</span><span class="ow">not</span> <span class="n">xyz_orig</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;F_CONTIGUOUS&quot;</span><span class="p">])):</span>
+            <span class="n">xyz_orig</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">xyz_orig</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_setup_md</span><span class="p">(</span><span class="n">icomm_grid</span><span class="o">.</span><span class="n">py2f</span><span class="p">(),</span> <span class="n">xyzL</span><span class="p">,</span> <span class="n">xyz_orig</span><span class="p">)</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_proc_extents</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_proc_extents</span>
+    <span class="n">py_proc_extents</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">c_int</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">proc_extents</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coord</span><span class="p">,</span> <span class="n">realm</span><span class="p">):</span>
+        <span class="n">coord</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">coord</span><span class="p">)</span>
+        <span class="n">extents</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_proc_extents</span><span class="p">(</span><span class="n">coord</span><span class="p">,</span> <span class="n">realm</span><span class="p">,</span> <span class="n">extents</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">extents</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_my_proc_extents</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_my_proc_extents</span>
+    <span class="n">py_my_proc_extents</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">my_proc_extents</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">extents</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_my_proc_extents</span><span class="p">(</span><span class="n">extents</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">extents</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_proc_portion</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_proc_portion</span>
+    <span class="n">py_proc_portion</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">c_int</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+<div class="viewcode-block" id="CPL.proc_portion"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.proc_portion">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">proc_portion</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coord</span><span class="p">,</span> <span class="n">realm</span><span class="p">,</span> <span class="n">limits</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            Get maximum and minimum cell indices, i.e. the &#39;portion&#39;, of the</span>
+<span class="sd">            input cell extents &#39;limits&#39; that is contributed by the processor</span>
+<span class="sd">            specified by processor coord. </span>
+<span class="sd">        </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">        </span>
+<span class="sd">            Assumes the coupler has been initialised with `CPL.init &lt;#cplpy.CPL.init&gt;`_ and </span>
+<span class="sd">            topological mapping has been setup using either `CPL.setup_md &lt;#cplpy.CPL.setup_md&gt;`_ </span>
+<span class="sd">            or `CPL.setup_cfd &lt;#cplpy.CPL.setup_cfd&gt;`_ as appropriate.</span>
+<span class="sd">            - Note: limits(6) and portion(6) are of the form: (xmin,xmax,ymin,ymax,zmin,zmax)</span>
+<span class="sd">        </span>
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">        </span>
+<span class="sd">              cpl.proc_portion(coord, realm, limits)</span>
+<span class="sd">        </span>
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">            - coord</span>
+<span class="sd">            </span>
+<span class="sd">                - processor cartesian coordinate, list or numpy array of 3 integers </span>
+<span class="sd">            - realm</span>
+<span class="sd">            </span>
+<span class="sd">                - cfd_realm (1) or md_realm (2) (integer) </span>
+<span class="sd">            - limits</span>
+<span class="sd">            </span>
+<span class="sd">                - Array of cell extents that specify the input region, list or numpy array of 6 integers  </span>
+<span class="sd">        </span>
+<span class="sd">        </span>
+<span class="sd">            **Outputs**</span>
+<span class="sd">        </span>
+<span class="sd">            - portion</span>
+<span class="sd">                - Array of cell extents that define the local processor&#39;s</span>
+<span class="sd">                  contribution to the input region &#39;limits&#39;, numpy array of 6 integers  </span>
+<span class="sd">        </span>
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="n">coord</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">coord</span><span class="p">)</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="n">portion</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_proc_portion</span><span class="p">(</span><span class="n">coord</span><span class="p">,</span> <span class="n">realm</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">portion</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">portion</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_my_proc_portion</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_my_proc_portion</span>
+    <span class="n">py_my_proc_portion</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+<div class="viewcode-block" id="CPL.my_proc_portion"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.my_proc_portion">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">my_proc_portion</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">limits</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            Get maximum and minimum cell indices, i.e. the &#39;portion&#39; on calling process. </span>
+<span class="sd">        </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">        </span>
+<span class="sd">            Assumes the coupler has been initialised with `CPL.init &lt;#cplpy.CPL.init&gt;`_ and </span>
+<span class="sd">            topological mapping has been setup using either `CPL.setup_md &lt;#cplpy.CPL.setup_md&gt;`_ </span>
+<span class="sd">            or `CPL.setup_cfd &lt;#cplpy.CPL.setup_cfd&gt;`_ as appropriate.</span>
+<span class="sd">            - Note: limits(6) and portion(6) are of the form: (xmin,xmax,ymin,ymax,zmin,zmax)</span>
+<span class="sd">        </span>
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">        </span>
+<span class="sd">                CPL.my_proc_portion(limits)</span>
+<span class="sd">        </span>
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">            - limits</span>
+<span class="sd">            </span>
+<span class="sd">                - Array of cell extents that specify the input region, list or numpy array of 6 integers  </span>
+<span class="sd">        </span>
+<span class="sd">        </span>
+<span class="sd">            **Outputs**</span>
+<span class="sd">        </span>
+<span class="sd">            - portion</span>
+<span class="sd">                - Array of cell extents that define the local processor&#39;s</span>
+<span class="sd">                  contribution to the input region &#39;limits&#39;, numpy array of 6 integers  </span>
+<span class="sd">        </span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="n">portion</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_my_proc_portion</span><span class="p">(</span><span class="n">limits</span><span class="p">,</span> <span class="n">portion</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">portion</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_map_cfd2md_coord</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_map_cfd2md_coord</span>
+    <span class="n">py_map_cfd2md_coord</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">map_cfd2md_coord</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coord_cfd</span><span class="p">):</span>
+        <span class="n">coord_cfd</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">coord_cfd</span><span class="p">)</span>
+        <span class="n">coord_md</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_map_cfd2md_coord</span><span class="p">(</span><span class="n">coord_cfd</span><span class="p">,</span> <span class="n">coord_md</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">coord_md</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_map_md2cfd_coord</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_map_md2cfd_coord</span>
+    <span class="n">py_map_md2cfd_coord</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">map_md2cfd_coord</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coord_md</span><span class="p">):</span>
+        <span class="n">coord_md</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">coord_md</span><span class="p">)</span>
+        <span class="n">coord_cfd</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_map_md2cfd_coord</span><span class="p">(</span><span class="n">coord_md</span><span class="p">,</span> <span class="n">coord_cfd</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">coord_cfd</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_map_glob2loc_cell</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_map_glob2loc_cell</span>
+    <span class="n">py_map_glob2loc_cell</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">map_glob2loc_cell</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">glob_cell</span><span class="p">):</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="n">glob_cell</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">glob_cell</span><span class="p">)</span>
+        <span class="n">loc_cell</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_map_glob2loc_cell</span><span class="p">(</span><span class="n">limits</span><span class="p">,</span> <span class="n">glob_cell</span><span class="p">,</span> <span class="n">loc_cell</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">loc_cell</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_map_cell2coord</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_map_cell2coord</span>
+    <span class="n">py_map_cell2coord</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">c_int</span><span class="p">,</span> <span class="n">c_int</span><span class="p">,</span> <span class="n">c_int</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">map_cell2coord</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+        <span class="n">coord</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_map_cell2coord</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">k</span><span class="p">,</span> <span class="n">coord</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">coord</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_map_coord2cell</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_map_coord2cell</span>
+    <span class="n">py_map_coord2cell</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">c_double</span><span class="p">,</span> <span class="n">c_double</span><span class="p">,</span> <span class="n">c_double</span><span class="p">,</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">map_coord2cell</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">):</span>
+        <span class="n">cell</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_map_coord2cell</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">cell</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cell</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_get_no_cells</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_get_no_cells</span>
+    <span class="n">py_get_no_cells</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">3</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get_no_cells</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">limits</span><span class="p">):</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="n">no_cells</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_get_no_cells</span><span class="p">(</span><span class="n">limits</span><span class="p">,</span> <span class="n">no_cells</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">no_cells</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="c1">#Limits of overlap region</span>
+    <span class="n">py_get_olap_limits</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_get_olap_limits</span>
+    <span class="n">py_get_olap_limits</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get_olap_limits</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_get_olap_limits</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">limits</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="c1">#Limits of contraint region</span>
+    <span class="n">py_get_cnst_limits</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_get_cnst_limits</span>
+    <span class="n">py_get_cnst_limits</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get_cnst_limits</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_get_cnst_limits</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">limits</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="c1">#Limits of boundary region</span>
+    <span class="n">py_get_bnry_limits</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_get_bnry_limits</span>
+    <span class="n">py_get_bnry_limits</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get_bnry_limits</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">limits</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_get_bnry_limits</span><span class="p">(</span><span class="n">limits</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">limits</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_set_timing</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_set_timing</span>
+    <span class="n">py_set_timing</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">c_int</span><span class="p">,</span> <span class="n">c_int</span><span class="p">,</span> <span class="n">c_double</span><span class="p">]</span>
+
+    <span class="c1">#Don&#39;t call abortMPI so it can be handled nicely in Python.</span>
+    <span class="c1">#@abortMPI</span>
+    <span class="k">def</span> <span class="nf">set_timing</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">initialstep</span><span class="p">,</span> <span class="n">nsteps</span><span class="p">,</span> <span class="n">dt</span><span class="p">):</span>
+        <span class="k">class</span> <span class="nc">DepricatedException</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+            <span class="sd">&quot;&quot;&quot;Raise Error as function should not be used&quot;&quot;&quot;</span>
+        <span class="k">raise</span> <span class="n">DepricatedException</span><span class="p">(</span><span class="s2">&quot;CPL set_timing is depricated and should not be used&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_set_timing</span><span class="p">(</span><span class="n">initialstep</span><span class="p">,</span> <span class="n">nsteps</span><span class="p">,</span> <span class="n">dt</span><span class="p">)</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_send</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_send</span>
+    <span class="n">py_send</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span> 
+         <span class="n">POINTER</span><span class="p">(</span><span class="n">c_bool</span><span class="p">)]</span>
+
+    <span class="n">py_send_min</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_send_min</span>
+    <span class="n">py_send_min</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">POINTER</span><span class="p">(</span><span class="n">c_bool</span><span class="p">)]</span>
+
+<div class="viewcode-block" id="CPL.send"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.send">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">send</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">asend</span><span class="p">,</span> <span class="n">limits</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            </span>
+<span class="sd">            Send four dimensional array *asend* of data from all processors in the </span>
+<span class="sd">            current realm with data between global cell array *limits* to the </span>
+<span class="sd">            corresponding processors from the other realm.</span>
+<span class="sd">            </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">            </span>
+<span class="sd">            Assumes the coupler has been initialised with `CPL.init &lt;#cplpy.CPL.init&gt;`_ and </span>
+<span class="sd">            topological mapping has been setup using either `CPL.setup_md &lt;#cplpy.CPL.setup_md&gt;`_ </span>
+<span class="sd">            or `CPL.setup_cfd &lt;#cplpy.CPL.setup_cfd&gt;`_ as appropriate.</span>
+<span class="sd">            </span>
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">            </span>
+<span class="sd">              CPL.send(asend, limits=None)    </span>
+<span class="sd">            </span>
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - asend</span>
+<span class="sd">            </span>
+<span class="sd">               - Array of data to send. Should be a four dimensional Numpy array allocated using the number of cells on the current processor between the limits. For example, if overlap limits are 8 cells, between cells 0 and 7 split over 2 procesors, the first processor will have from 0 to 3 and the second from 4 to 7. This should be be obtained from `CPL.my_proc_portion(limits, portion) &lt;#cplpy.CPL.my_proc_portion&gt;`_ to allocate a Numpy array, or allocated using the helper function `CPL.get_arrays &lt;#cplpy.CPL.get_arrays&gt;`_ with appropriate sizes.</span>
+<span class="sd">                .</span>
+<span class="sd">             - limits [Optional]</span>
+<span class="sd">            </span>
+<span class="sd">               - Optional arguments limits specify if global limits of overlap region not used. These are in the global cell coordinates, and must match the corresponding recieve.</span>
+<span class="sd">            </span>
+<span class="sd">            **Outputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - send_flag</span>
+<span class="sd">            </span>
+<span class="sd">               - Returned flag which indicates success or failure of send process</span>
+<span class="sd">            </span>
+<span class="sd">            **Example**</span>
+
+<span class="sd">            This example links with the `CPL.recv &lt;#cplpy.CPL.recv&gt;`_ examples </span>
+<span class="sd">                        </span>
+<span class="sd">            .. literalinclude:: ../../../examples/sendrecv_globcell/python/cfd_send_cells.py</span>
+
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">asend</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">asend</span><span class="p">)</span>
+        <span class="n">asend_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">asend</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">send_flag</span> <span class="o">=</span> <span class="n">c_bool</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">limits</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">py_send_min</span><span class="p">(</span><span class="n">asend</span><span class="p">,</span> <span class="n">asend_shape</span><span class="p">,</span> <span class="n">byref</span><span class="p">(</span><span class="n">send_flag</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">py_send</span><span class="p">(</span><span class="n">asend</span><span class="p">,</span> <span class="n">asend_shape</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">byref</span><span class="p">(</span><span class="n">send_flag</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">send_flag</span><span class="o">.</span><span class="n">value</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_recv</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_recv</span>
+    <span class="n">py_recv</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span> 
+         <span class="n">POINTER</span><span class="p">(</span><span class="n">c_bool</span><span class="p">)]</span>
+
+    <span class="n">py_recv_min</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_recv_min</span>
+    <span class="n">py_recv_min</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">POINTER</span><span class="p">(</span><span class="n">c_bool</span><span class="p">)]</span>
+
+
+<div class="viewcode-block" id="CPL.recv"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.recv">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">recv</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">arecv</span><span class="p">,</span> <span class="n">limits</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">            </span>
+<span class="sd">            Receive data from to local grid from the associated ranks from the other realm</span>
+<span class="sd">            </span>
+<span class="sd">            **Remarks**</span>
+<span class="sd">            </span>
+<span class="sd">            Assumes the coupler has been initialised with `CPL.init &lt;#cplpy.CPL.init&gt;`_ and </span>
+<span class="sd">            topological mapping has been setup using either `CPL.setup_md &lt;#cplpy.CPL.setup_md&gt;`_ </span>
+<span class="sd">            or `CPL.setup_cfd &lt;#cplpy.CPL.setup_cfd&gt;`_ as appropriate.</span>
+<span class="sd">            </span>
+<span class="sd">            **Synopsis**</span>
+<span class="sd">            </span>
+<span class="sd">            .. code-block:: python</span>
+<span class="sd">            </span>
+<span class="sd">              CPL.recv(arecv, limits=None)    </span>
+
+<span class="sd">            **Inputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - arecv</span>
+<span class="sd">            </span>
+<span class="sd">               - Array of data to recv. Should be a four dimensional Numpy array allocated using the number of cells on the current processor between the limits. For example, if overlap limits are 8 cells, between cells 0 and 7 split over 2 procesors, the first processor will have from 0 to 3 and the second from 4 to 7. This should be be obtained from `CPL.my_proc_portion(limits, portion) &lt;#cplpy.CPL.my_proc_portion&gt;`_ to allocate a Numpy array, or allocated using the helper function `CPL.get_arrays &lt;#cplpy.CPL.get_arrays&gt;`_ with appropriate sizes.</span>
+
+<span class="sd">             - limits [Optional]</span>
+<span class="sd">            </span>
+<span class="sd">               - Limits in global cell coordinates, must be the same as corresponding send command.</span>
+<span class="sd">            </span>
+<span class="sd">            **Outputs**</span>
+<span class="sd">            </span>
+<span class="sd">             - recv_flag</span>
+<span class="sd">            </span>
+<span class="sd">               - Returned flag which indicates success or failure of recv process</span>
+<span class="sd">            </span>
+<span class="sd">            **Example**</span>
+
+<span class="sd">            This example links with the `CPL.send &lt;#cplpy.CPL.send&gt;`_ examples </span>
+
+<span class="sd">            .. literalinclude:: ../../../examples/sendrecv_globcell/python/md_recv_cells.py</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="n">arecv</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">arecv</span><span class="p">)</span>
+        <span class="n">arecv_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">arecv</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">recv_flag</span> <span class="o">=</span> <span class="n">c_bool</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">limits</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">py_recv_min</span><span class="p">(</span><span class="n">arecv</span><span class="p">,</span> <span class="n">arecv_shape</span><span class="p">,</span> <span class="n">byref</span><span class="p">(</span><span class="n">recv_flag</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">py_recv</span><span class="p">(</span><span class="n">arecv</span><span class="p">,</span> <span class="n">arecv_shape</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">byref</span><span class="p">(</span><span class="n">recv_flag</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">arecv</span><span class="p">,</span> <span class="n">recv_flag</span><span class="o">.</span><span class="n">value</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_gather</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_gather</span>
+    <span class="n">py_gather</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">gather</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">gather_array</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">recv_array</span><span class="p">):</span>
+        <span class="n">gather_array</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">gather_array</span><span class="p">)</span>
+        <span class="n">recv_array</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">recv_array</span><span class="p">)</span>
+        <span class="n">gather_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">gather_array</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">recv_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">recv_array</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_gather</span><span class="p">(</span><span class="n">gather_array</span><span class="p">,</span> <span class="n">gather_shape</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">recv_array</span><span class="p">,</span>
+                       <span class="n">recv_shape</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">recv_array</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_scatter</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_scatter</span>
+    <span class="n">py_scatter</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">scatter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scatter_array</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span> <span class="n">recv_array</span><span class="p">):</span>
+        <span class="n">scatter_array</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">scatter_array</span><span class="p">)</span>
+        <span class="n">recv_array</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">recv_array</span><span class="p">)</span>
+        <span class="n">scatter_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">scatter_array</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span>
+                                 <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="n">recv_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">recv_array</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_scatter</span><span class="p">(</span><span class="n">scatter_array</span><span class="p">,</span> <span class="n">scatter_shape</span><span class="p">,</span> <span class="n">limits</span><span class="p">,</span>
+                        <span class="n">recv_array</span><span class="p">,</span> <span class="n">recv_shape</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">recv_array</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_swaphalos</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_swaphalos</span>
+    <span class="n">py_swaphalos</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">),</span>
+         <span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">ndim</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">swaphalos</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">A</span><span class="p">):</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">A</span><span class="p">)</span>
+        <span class="n">A_shape</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">A</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_swaphalos</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="n">A_shape</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">A</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_overlap</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_overlap</span>
+    <span class="n">py_overlap</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">overlap</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_overlap</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">c_bool</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">py_overlap</span><span class="p">()</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="n">py_is_proc_inside</span> <span class="o">=</span> <span class="n">_cpl_lib</span><span class="o">.</span><span class="n">CPLC_is_proc_inside</span>
+    <span class="n">py_is_proc_inside</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> \
+        <span class="p">[</span><span class="n">ndpointer</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">int32</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">6</span><span class="p">,),</span> <span class="n">flags</span><span class="o">=</span><span class="s1">&#39;aligned, f_contiguous&#39;</span><span class="p">)]</span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">is_proc_inside</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">region</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">py_is_proc_inside</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">c_bool</span>
+        <span class="n">region</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_type_check</span><span class="p">(</span><span class="n">region</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">py_is_proc_inside</span><span class="p">(</span><span class="n">region</span><span class="p">)</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var_name</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">var_type</span> <span class="o">=</span> <span class="n">_CPL_GET_VARS</span><span class="p">[</span><span class="n">var_name</span><span class="p">]</span>
+            <span class="n">fun</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cpl_lib</span><span class="p">,</span> <span class="s2">&quot;CPLC_&quot;</span> <span class="o">+</span> <span class="n">var_name</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;CPL-ERROR: CPL Library function &#39;&quot;</span> <span class="o">+</span>
+                   <span class="nb">str</span><span class="p">(</span><span class="n">var_name</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;&#39; not found!&quot;</span><span class="p">))</span>
+            <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;Available options include: &quot;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">var</span> <span class="ow">in</span> <span class="n">_CPL_GET_VARS</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">var</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">fun</span><span class="o">.</span><span class="n">restype</span> <span class="o">=</span> <span class="n">var_type</span>
+            <span class="k">return</span> <span class="n">fun</span><span class="p">()</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">set</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">var_name</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">var_type</span> <span class="o">=</span> <span class="n">_CPL_SET_VARS</span><span class="p">[</span><span class="n">var_name</span><span class="p">]</span>
+            <span class="n">fun</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_cpl_lib</span><span class="p">,</span> <span class="s2">&quot;CPLC_set_&quot;</span> <span class="o">+</span> <span class="n">var_name</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;CPL-ERROR: CPL Library function &#39;&quot;</span> <span class="o">+</span>
+                   <span class="nb">str</span><span class="p">(</span><span class="n">var_name</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;&#39; not found!&quot;</span><span class="p">))</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">fun</span><span class="o">.</span><span class="n">argtypes</span> <span class="o">=</span> <span class="p">[</span><span class="n">var_type</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">fun</span><span class="p">(</span><span class="n">var_type</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">_type_check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">A</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">A</span><span class="p">)</span> <span class="ow">is</span> <span class="nb">list</span><span class="p">:</span>
+            <span class="n">ndtype</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="n">A</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">ndtype</span> <span class="o">==</span> <span class="nb">float</span><span class="p">:</span>
+                <span class="n">ndtype</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">float64</span>
+            <span class="k">elif</span> <span class="n">ndtype</span> <span class="o">==</span> <span class="nb">int</span><span class="p">:</span>
+                <span class="n">ndtype</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">int32</span>
+            <span class="n">A</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">asfortranarray</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">ndtype</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">A</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;F_CONTIGUOUS&quot;</span><span class="p">]:</span>
+            <span class="n">A</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="n">requirements</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;F&#39;</span><span class="p">])</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">A</span><span class="o">.</span><span class="n">flags</span><span class="p">[</span><span class="s2">&quot;ALIGNED&quot;</span><span class="p">]:</span>
+            <span class="n">A</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="n">A</span><span class="p">,</span> <span class="n">requirements</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;A&#39;</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">A</span>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+<div class="viewcode-block" id="CPL.get_arrays"><a class="viewcode-back" href="../python_api.shtml#cplpy.CPL.get_arrays">[docs]</a>    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">get_arrays</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">recv_size</span><span class="p">,</span> <span class="n">send_size</span><span class="p">):</span>
+
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">          Return recv array and send array based</span>
+<span class="sd">          on constraint/boundary sizes</span>
+
+<span class="sd">          **Example**</span>
+
+<span class="sd">            A minimal example is possible using CPL.get_arrays, which shows paired sending and recv commands</span>
+
+<span class="sd">            .. literalinclude:: ../../../examples/minimal_send_recv_mocks/minimal_MD.py</span>
+<span class="sd">            .. literalinclude:: ../../../examples/minimal_send_recv_mocks/minimal_CFD.py</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c1">#Get constraint region</span>
+        <span class="n">cnst_limits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_cnst_limits</span><span class="p">();</span>
+        <span class="n">cnst_portion</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_proc_portion</span><span class="p">(</span><span class="n">cnst_limits</span><span class="p">)</span>
+        <span class="n">cnst_ncxl</span><span class="p">,</span> <span class="n">cnst_ncyl</span><span class="p">,</span> <span class="n">cnst_nczl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_no_cells</span><span class="p">(</span><span class="n">cnst_portion</span><span class="p">)</span>
+
+        <span class="c1">#Get overlap region</span>
+        <span class="n">BC_limits</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_bnry_limits</span><span class="p">()</span>
+        <span class="n">BC_portion</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_proc_portion</span><span class="p">(</span><span class="n">BC_limits</span><span class="p">)</span>
+        <span class="n">BC_ncxl</span><span class="p">,</span> <span class="n">BC_ncyl</span><span class="p">,</span> <span class="n">BC_nczl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_no_cells</span><span class="p">(</span><span class="n">BC_portion</span><span class="p">)</span>
+
+        <span class="c1">#Allocate send and recv arrays</span>
+        <span class="n">recv_array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">recv_size</span><span class="p">,</span> <span class="n">BC_ncxl</span><span class="p">,</span> <span class="n">BC_ncyl</span><span class="p">,</span> <span class="n">BC_nczl</span><span class="p">),</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+        <span class="n">send_array</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">send_size</span><span class="p">,</span> <span class="n">cnst_ncxl</span><span class="p">,</span> <span class="n">cnst_ncyl</span><span class="p">,</span> <span class="n">cnst_nczl</span><span class="p">),</span> <span class="n">order</span><span class="o">=</span><span class="s1">&#39;F&#39;</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">recv_array</span><span class="p">,</span> <span class="n">send_array</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+    <span class="nd">@abortMPI</span>
+    <span class="k">def</span> <span class="nf">dump_region</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">region</span><span class="p">,</span> <span class="n">array</span><span class="p">,</span> <span class="n">fname</span><span class="p">,</span> <span class="n">comm</span><span class="p">,</span> <span class="n">components</span><span class="o">=</span><span class="p">{},</span> <span class="n">coords</span><span class="o">=</span><span class="s2">&quot;mine&quot;</span><span class="p">):</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+            <span class="n">portion</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">my_proc_portion</span><span class="p">(</span><span class="n">region</span><span class="p">)</span>
+            <span class="n">cell_coords</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+            <span class="n">dx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dx&quot;</span><span class="p">)</span>
+            <span class="n">dy</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dy&quot;</span><span class="p">)</span>
+            <span class="n">dz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;dz&quot;</span><span class="p">)</span>
+            <span class="n">def_func</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="n">x</span>
+            <span class="n">components_dic</span> <span class="o">=</span> <span class="n">components</span>
+            <span class="k">if</span> <span class="n">callable</span><span class="p">(</span><span class="n">components</span><span class="p">):</span>
+                <span class="n">def_func</span> <span class="o">=</span> <span class="n">components</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">components</span> <span class="ow">or</span> <span class="n">callable</span><span class="p">(</span><span class="n">components</span><span class="p">):</span>
+                <span class="n">components_idx</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">array</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]))</span>
+                <span class="k">for</span> <span class="n">c_idx</span> <span class="ow">in</span> <span class="n">components_idx</span><span class="p">:</span>
+                    <span class="n">components_dic</span><span class="p">[</span><span class="n">c_idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">def_func</span>
+            <span class="k">for</span> <span class="n">k</span><span class="p">,</span><span class="n">v</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">components_dic</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+                <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="n">components_dic</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">def_func</span>
+            <span class="c1">#if self.overlap():</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_proc_inside</span><span class="p">(</span><span class="n">portion</span><span class="p">):</span>
+                <span class="n">ncx</span><span class="p">,</span> <span class="n">ncy</span><span class="p">,</span> <span class="n">ncz</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_no_cells</span><span class="p">(</span><span class="n">portion</span><span class="p">)</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">ncx</span><span class="p">,</span> <span class="n">ncy</span><span class="p">,</span> <span class="n">ncz</span><span class="p">)</span> <span class="o">!=</span> <span class="n">array</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+                    <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;self-Error in dump_region(): array and processor portion of different size.&quot;</span><span class="p">)</span>
+                    <span class="n">MPI</span><span class="o">.</span><span class="n">COMM_WORLD</span><span class="o">.</span><span class="n">Abort</span><span class="p">(</span><span class="n">errorcode</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+                <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">portion</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">portion</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">+</span><span class="mi">1</span><span class="p">):</span>
+                    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">portion</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">portion</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="o">+</span><span class="mi">1</span><span class="p">):</span>
+                        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">portion</span><span class="p">[</span><span class="mi">4</span><span class="p">],</span> <span class="n">portion</span><span class="p">[</span><span class="mi">5</span><span class="p">]</span><span class="o">+</span><span class="mi">1</span><span class="p">):</span>
+                            <span class="n">cell_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">map_cell2coord</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">k</span><span class="p">)</span>
+                            <span class="k">if</span> <span class="n">coords</span> <span class="o">!=</span> <span class="s2">&quot;mine&quot;</span><span class="p">:</span>
+                                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">realm</span> <span class="o">==</span> <span class="n">CPL</span><span class="o">.</span><span class="n">CFD_REALM</span><span class="p">:</span>
+                                    <span class="n">cell_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">map_cfd2md_coord</span><span class="p">(</span><span class="n">cell_coords</span><span class="p">)</span>
+                                <span class="k">else</span><span class="p">:</span>
+                                  <span class="n">cell_coords</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">map_md2cfd_coord</span><span class="p">(</span><span class="n">cell_coords</span><span class="p">)</span>
+                            <span class="p">[</span><span class="n">i_loc</span><span class="p">,</span> <span class="n">j_loc</span><span class="p">,</span> <span class="n">k_loc</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">map_glob2loc_cell</span><span class="p">(</span><span class="n">portion</span><span class="p">,</span> <span class="p">[</span><span class="n">i</span><span class="p">,</span> <span class="n">j</span><span class="p">,</span> <span class="n">k</span><span class="p">])</span>
+                            <span class="n">lines</span> <span class="o">+=</span> <span class="nb">str</span><span class="p">(</span><span class="n">cell_coords</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">+</span> <span class="n">dx</span><span class="o">/</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span>\
+                                   <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">cell_coords</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">dy</span><span class="o">/</span><span class="mf">2.0</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot; &quot;</span>\
+                                   <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">cell_coords</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span> <span class="o">+</span> <span class="n">dz</span><span class="o">/</span><span class="mf">2.0</span><span class="p">)</span>
+                                   
+                            <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">components_dic</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+                                <span class="n">lines</span> <span class="o">+=</span> <span class="s2">&quot; &quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="n">k</span><span class="p">,</span> <span class="n">i_loc</span><span class="p">,</span> <span class="n">j_loc</span><span class="p">,</span> <span class="n">k_loc</span><span class="p">]))</span>
+                            <span class="n">lines</span> <span class="o">+=</span> <span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span>
+
+            <span class="c1"># Gather all the forces from every processor and dump them to a file at the root</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="n">comm</span><span class="o">.</span><span class="n">gather</span><span class="p">(</span><span class="n">lines</span><span class="p">,</span> <span class="n">root</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+
+            <span class="n">myrank</span> <span class="o">=</span> <span class="n">comm</span><span class="o">.</span><span class="n">Get_rank</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">myrank</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">fname</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file_out</span><span class="p">:</span>
+                    <span class="n">file_out</span><span class="o">.</span><span class="n">writelines</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span></div>
+
+    <span class="c1"># - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - </span>
+
+<span class="k">def</span> <span class="nf">cart_create</span><span class="p">(</span><span class="n">old_comm</span><span class="p">,</span> <span class="n">dims</span><span class="p">,</span> <span class="n">periods</span><span class="p">,</span> <span class="n">coords</span><span class="p">):</span>
+    <span class="n">dummy_cart_comm</span> <span class="o">=</span> <span class="n">old_comm</span><span class="o">.</span><span class="n">Create_cart</span><span class="p">(</span><span class="n">dims</span><span class="p">,</span> <span class="n">periods</span><span class="p">)</span>
+    <span class="n">temp_comm</span> <span class="o">=</span> <span class="n">old_comm</span><span class="o">.</span><span class="n">Split</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">dummy_cart_comm</span><span class="o">.</span><span class="n">Get_rank</span><span class="p">())</span>
+    <span class="n">new_cart_comm</span> <span class="o">=</span> <span class="n">temp_comm</span><span class="o">.</span><span class="n">Create_cart</span><span class="p">(</span><span class="n">dims</span><span class="p">,</span> <span class="n">periods</span><span class="p">)</span>
+    <span class="n">comm_coords</span> <span class="o">=</span> <span class="n">new_cart_comm</span><span class="o">.</span><span class="n">Get_coords</span><span class="p">(</span><span class="n">new_cart_comm</span><span class="o">.</span><span class="n">Get_rank</span><span class="p">())</span>
+    <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="p">(</span><span class="n">coords</span> <span class="o">==</span> <span class="n">comm_coords</span><span class="p">)</span><span class="o">.</span><span class="n">all</span><span class="p">()):</span>
+            <span class="nb">print</span> <span class="p">(</span><span class="s2">&quot;cart_create Error&quot;</span><span class="p">)</span>
+            <span class="n">exit</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">new_cart_comm</span>
+
+
+<span class="c1"># -----------------------------TESTING ROUTINES------------------------------ #</span>
+
+
+<span class="n">CONFIG_FILE</span> <span class="o">=</span> <span class="s2">&quot;COUPLER.in&quot;</span>
+<span class="n">TEST_DIR</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
+<span class="n">TEST_NAME</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
+<span class="n">TESTS_DIR_NAMES</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;initialisation&quot;</span><span class="p">,</span> <span class="s2">&quot;mapping&quot;</span><span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">copyanything</span><span class="p">(</span><span class="n">src_dir</span><span class="p">,</span> <span class="n">dst_dir</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+    <span class="n">src_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">src_dir</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">copytree</span><span class="p">(</span><span class="n">src_dir</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dst_dir</span><span class="p">,</span> <span class="n">name</span><span class="p">))</span>
+    <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ENOTDIR</span><span class="p">:</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">src_dir</span><span class="p">,</span> <span class="n">dst_dir</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span> <span class="k">raise</span>
+
+<span class="k">def</span> <span class="nf">parametrize_file</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">dest</span><span class="p">,</span> <span class="n">params</span><span class="p">):</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="s2">&quot;r+&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">param_file_in</span><span class="p">:</span>
+        <span class="n">lines</span> <span class="o">=</span> <span class="n">param_file_in</span><span class="o">.</span><span class="n">readlines</span><span class="p">()</span>
+        <span class="k">for</span> <span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">v</span><span class="p">)</span> <span class="ow">in</span> <span class="nb">list</span><span class="p">(</span><span class="n">params</span><span class="o">.</span><span class="n">items</span><span class="p">()):</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="p">[</span><span class="n">l</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;$[&quot;</span> <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="o">+</span> <span class="s2">&quot;]&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">))</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">]</span>
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">dest</span><span class="p">,</span> <span class="s2">&quot;w+&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">param_file_out</span><span class="p">:</span>
+        <span class="n">param_file_out</span><span class="o">.</span><span class="n">writelines</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">parametrize_config</span><span class="p">(</span><span class="n">template_dir</span><span class="p">,</span> <span class="n">params</span><span class="p">):</span>
+    <span class="c1"># It assumes is in the temp directory with cpl/ folder accessible</span>
+    <span class="c1"># from this level.</span>
+    <span class="n">source</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">template_dir</span><span class="p">,</span> <span class="n">CONFIG_FILE</span><span class="p">)</span>
+    <span class="n">dest</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="s2">&quot;cpl/&quot;</span><span class="p">,</span> <span class="n">CONFIG_FILE</span><span class="p">)</span>
+    <span class="n">parametrize_file</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">dest</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">prepare_config</span><span class="p">(</span><span class="n">tmpdir</span><span class="p">,</span> <span class="n">test_dir</span><span class="p">,</span> <span class="n">md_fname</span><span class="p">,</span> <span class="n">cfd_fname</span><span class="p">):</span>
+    <span class="n">tmpdir</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="s2">&quot;cpl&quot;</span><span class="p">)</span>
+    <span class="n">copyanything</span><span class="p">(</span><span class="n">test_dir</span><span class="p">,</span> <span class="n">tmpdir</span><span class="o">.</span><span class="n">strpath</span><span class="p">,</span> <span class="n">md_fname</span><span class="p">)</span>
+    <span class="n">copyanything</span><span class="p">(</span><span class="n">test_dir</span><span class="p">,</span> <span class="n">tmpdir</span><span class="o">.</span><span class="n">strpath</span><span class="p">,</span> <span class="n">cfd_fname</span><span class="p">)</span>
+    <span class="n">os</span><span class="o">.</span><span class="n">chdir</span><span class="p">(</span><span class="n">tmpdir</span><span class="o">.</span><span class="n">strpath</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">run_test</span><span class="p">(</span><span class="n">template_dir</span><span class="p">,</span> <span class="n">config_params</span><span class="p">,</span> <span class="n">md_exec</span><span class="p">,</span> <span class="n">md_fname</span><span class="p">,</span> <span class="n">md_args</span><span class="p">,</span> <span class="n">cfd_exec</span><span class="p">,</span>
+             <span class="n">cfd_fname</span><span class="p">,</span> <span class="n">cfd_args</span><span class="p">,</span> <span class="n">md_params</span><span class="p">,</span> <span class="n">cfd_params</span><span class="p">,</span> <span class="n">err_msg</span><span class="p">,</span> 
+             <span class="n">debug</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">mpirun</span><span class="o">=</span><span class="s2">&quot;split&quot;</span><span class="p">,</span> <span class="n">printoutput</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+
+    <span class="kn">from</span> <span class="nn">distutils.spawn</span> <span class="k">import</span> <span class="n">find_executable</span>
+    <span class="kn">import</span> <span class="nn">sys</span>
+    <span class="n">parametrize_config</span><span class="p">(</span><span class="n">template_dir</span><span class="p">,</span> <span class="n">config_params</span><span class="p">)</span>
+    <span class="c1">#Save parameter dictonaries to be read by md/cfd codes</span>
+    <span class="n">pickle</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">md_params</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;md_params.dic&quot;</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">))</span>
+    <span class="n">pickle</span><span class="o">.</span><span class="n">dump</span><span class="p">(</span><span class="n">cfd_params</span><span class="p">,</span> <span class="nb">open</span><span class="p">(</span><span class="s2">&quot;cfd_params.dic&quot;</span><span class="p">,</span> <span class="s2">&quot;wb&quot;</span><span class="p">))</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">mdprocs</span> <span class="o">=</span> <span class="n">md_params</span><span class="p">[</span><span class="s2">&quot;npx&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">md_params</span><span class="p">[</span><span class="s2">&quot;npy&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">md_params</span><span class="p">[</span><span class="s2">&quot;npz&quot;</span><span class="p">]</span>
+        <span class="n">cfdprocs</span> <span class="o">=</span> <span class="n">cfd_params</span><span class="p">[</span><span class="s2">&quot;npx&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">cfd_params</span><span class="p">[</span><span class="s2">&quot;npy&quot;</span><span class="p">]</span> <span class="o">*</span> <span class="n">cfd_params</span><span class="p">[</span><span class="s2">&quot;npz&quot;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">find_executable</span><span class="p">(</span><span class="s2">&quot;mpiexec&quot;</span><span class="p">)</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Error: mpiexec not found.&quot;</span><span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">find_executable</span><span class="p">(</span><span class="n">md_exec</span><span class="p">)</span><span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;Error: </span><span class="si">%s</span><span class="s2"> not found.&quot;</span> <span class="o">%</span> <span class="n">md_exec</span><span class="p">))</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">find_executable</span><span class="p">(</span><span class="n">cfd_exec</span><span class="p">)</span><span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;Error: </span><span class="si">%s</span><span class="s2"> not found.&quot;</span> <span class="o">%</span> <span class="n">cfd_exec</span><span class="p">))</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+
+            
+        <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">md_fname</span><span class="p">)</span> <span class="ow">and</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">cfd_fname</span><span class="p">):</span>
+
+            <span class="k">if</span> <span class="s2">&quot;port&quot;</span> <span class="ow">in</span> <span class="n">mpirun</span><span class="p">:</span>
+                <span class="c1"># For OpenMPI &gt;= 3.0.0</span>
+                <span class="c1"># cmd = &quot; &quot;.join([&quot;mpiexec --oversubscribe&quot;, &quot;-n&quot;, str(mdprocs), md_exec, md_args, </span>
+                <span class="c1">#                 &quot;&amp; PID=$!;&quot;, &quot;mpiexec --oversubscribe&quot;, &quot;-n&quot;, str(cfdprocs), </span>
+                <span class="n">cmd</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s2">&quot;mpiexec&quot;</span><span class="p">,</span> <span class="s2">&quot;-n&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">mdprocs</span><span class="p">),</span> <span class="n">md_exec</span><span class="p">,</span> <span class="n">md_args</span><span class="p">,</span> 
+                                <span class="s2">&quot;&amp; PID=$!;&quot;</span><span class="p">,</span> <span class="s2">&quot;mpiexec&quot;</span><span class="p">,</span> <span class="s2">&quot;-n&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">cfdprocs</span><span class="p">),</span> 
+                                <span class="n">cfd_exec</span><span class="p">,</span> <span class="n">cfd_args</span><span class="p">,</span> <span class="s2">&quot;; wait $PID&quot;</span><span class="p">])</span>
+<span class="c1">#                cmd = &quot; &quot;.join([&quot;cplexec&quot;,</span>
+<span class="c1">#                                &quot;-m &quot;, str(mdprocs), &quot; &#39; &quot;, md_exec, md_args, &quot; &#39; &quot;</span>
+<span class="c1">#                                &quot;-c &quot;, str(cfdprocs), &quot; &#39; &quot;, cfd_exec, cfd_args, &quot; &#39; &quot;])</span>
+            <span class="k">elif</span> <span class="s2">&quot;split&quot;</span> <span class="ow">in</span> <span class="n">mpirun</span><span class="p">:</span>
+                <span class="c1"># For OpenMPI &gt;= 3.0.0</span>
+                <span class="c1"># cmd = &quot; &quot;.join([&quot;mpiexec --oversubscribe&quot;, &quot;-n&quot;, str(mdprocs), md_exec, md_args,</span>
+                <span class="n">cmd</span> <span class="o">=</span> <span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s2">&quot;mpiexec&quot;</span><span class="p">,</span><span class="s2">&quot;-n&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">mdprocs</span><span class="p">),</span> <span class="n">md_exec</span><span class="p">,</span> <span class="n">md_args</span><span class="p">,</span>
+                            <span class="s2">&quot;:&quot;</span><span class="p">,</span> <span class="s2">&quot;-n&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">cfdprocs</span><span class="p">),</span> <span class="n">cfd_exec</span><span class="p">,</span> <span class="n">cfd_args</span><span class="p">])</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;MPIrun type unknown&quot;</span><span class="p">,</span> <span class="n">mpirun</span><span class="p">)</span>
+
+            <span class="c1">#Check for OpenMPI version greater than 3 and add oversubscribe option</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">CPL</span><span class="o">.</span><span class="n">MPI_version</span> <span class="o">==</span> <span class="s2">&quot;OPENMPI&quot;</span><span class="p">):</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">CPL</span><span class="o">.</span><span class="n">ompi_major_version_no</span> <span class="o">&gt;=</span> <span class="mi">3</span><span class="p">):</span>
+                    <span class="n">cmd</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;mpiexec&quot;</span><span class="p">,</span><span class="s2">&quot;mpiexec --oversubscribe&quot;</span><span class="p">)</span>
+
+            <span class="n">cmd</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s2">&quot;mpiexec&quot;</span><span class="p">,</span><span class="s2">&quot;mpiexec --oversubscribe&quot;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">debug</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">MPI run: &quot;</span> <span class="o">+</span> <span class="n">cmd</span><span class="p">))</span>
+            <span class="n">out</span> <span class="o">=</span> <span class="n">check_output</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">STDOUT</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">printoutput</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="n">out</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;Current directory: &quot;</span> <span class="o">+</span> <span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">()))</span>
+            <span class="nb">print</span><span class="p">((</span><span class="n">md_fname</span> <span class="o">+</span> <span class="s2">&quot; or &quot;</span> <span class="o">+</span> <span class="n">cfd_fname</span> <span class="o">+</span> <span class="s2">&quot; are not found.&quot;</span><span class="p">))</span>
+            <span class="k">assert</span> <span class="kc">False</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="c1">#This checsk the error message is as expected</span>
+    <span class="k">except</span> <span class="n">CalledProcessError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">((</span><span class="n">exc</span><span class="o">.</span><span class="n">output</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">err_msg</span> <span class="o">!=</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">((</span><span class="s2">&quot;ERROR = &quot;</span><span class="p">,</span> <span class="n">err_msg</span><span class="p">))</span>
+            <span class="k">assert</span> <span class="n">err_msg</span> <span class="ow">in</span> <span class="n">exc</span><span class="o">.</span><span class="n">output</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="n">exc</span><span class="o">.</span><span class="n">output</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="s2">&quot;&quot;</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">err_msg</span> <span class="o">!=</span> <span class="s2">&quot;&quot;</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="kc">False</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="kc">True</span>
+    <span class="k">return</span> <span class="kc">True</span>
+
+<span class="k">def</span> <span class="nf">exec_tests</span><span class="p">(</span><span class="n">test</span><span class="o">=</span><span class="s2">&quot;all&quot;</span><span class="p">):</span>
+    <span class="kn">import</span> <span class="nn">pytest</span>
+    <span class="kn">import</span> <span class="nn">os</span>
+    <span class="n">test_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">))</span>
+    <span class="n">test_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">test_path</span><span class="p">,</span> <span class="s2">&quot;test&quot;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">test_path</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">test</span> <span class="o">!=</span> <span class="s2">&quot;all&quot;</span><span class="p">:</span>
+        <span class="n">test_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">test_path</span><span class="p">,</span> <span class="n">test</span><span class="p">)</span>
+    <span class="n">pytest</span><span class="o">.</span><span class="n">main</span><span class="p">([</span><span class="s2">&quot;-v&quot;</span><span class="p">,</span> <span class="n">test_path</span><span class="p">])</span>
+
+<span class="k">def</span> <span class="nf">get_test_dir</span><span class="p">():</span>
+    <span class="kn">import</span> <span class="nn">os</span>
+    <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">realpath</span><span class="p">(</span><span class="vm">__file__</span><span class="p">)),</span> <span class="s2">&quot;test&quot;</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
+    <span class="n">lib</span> <span class="o">=</span> <span class="n">CPL</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../index.shtml">cpl-library</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../cpp_api.shtml">C++ Bindings</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fortran_api.shtml">Fortran Bindings</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../python_api.shtml">Python Bindings</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../index.shtml">Documentation overview</a><ul>
+  <li><a href="index.shtml">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+<div id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../search.shtml" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</div>
+<script>$('#searchbox').show(0);</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &copy;2022, Ed Smith.
+      
+      |
+      Powered by <a href="http://sphinx-doc.org/">Sphinx 4.5.0</a>
+      &amp; <a href="https://github.com/bitprophet/alabaster">Alabaster 0.7.12</a>
+      
+    </div>
+
+    
+
+    
+  </div></body>
+</html>

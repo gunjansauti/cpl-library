@@ -1,0 +1,198 @@
+/* Fonts */
+@font-face 
+{ font-family: bebas;
+    src: url(fonts/BebasNeue.otf)
+}
+
+@font-face 
+{
+    font-family: opensans-regular; 
+    src: url(fonts/OpenSans/OpenSans-Regular.ttf) format('truetype');
+    font-weight: normal
+}
+
+@font-face 
+{
+    font-family: opensans-light; 
+    src: url(fonts/OpenSans/OpenSans-Light.ttf) format('truetype');
+    font-weight: normal
+}
+
+@font-face 
+{
+    font-family: futura-condensedlight;
+    src: url(fonts/Futura/FuturaLT-CondensedLight.ttf) format('truetype');
+    font-weight: normal
+}
+
+@font-face 
+{
+    font-family: futura-light;
+    src: url(fonts/Futura/FuturaLT-Light.ttf) format('truetype'); 
+    font-weight: normal
+}
+
+@font-face 
+{
+    font-family: futura;
+    src: url(fonts/Futura/FuturaLT.ttf) format('truetype');
+    font-weight: normal
+}
+
+/* Body */
+body 
+{
+    background-color:#fffffa;
+    font-family: opensans-light;
+    font-size: 18px;
+}
+h1
+{
+    font-family: bebas;
+    font-weight: normal;
+    margin-top: 100px;
+}
+h2
+{
+    font-family: bebas;
+    margin-top: 60px;
+    font-weight: normal;
+}
+h3
+{
+    font-family: bebas;
+    margin-top: 20px;
+    font-weight: normal;
+}
+
+mark.CPL {
+    font-family: bebas;
+    background: none;
+    margin-top: 20px;
+    font-weight: normal;
+}
+
+/* Links */
+a
+{
+    color: black;
+    text-decoration: none;
+    font-weight: bold;
+}
+a:hover
+{
+    color: gray;
+}
+
+/* Lists */
+ul
+{
+    list-style-type: circle;
+}
+
+
+.center
+{
+    background-color:#fffffa;
+    margin-left: auto;
+    margin-right: auto;
+    width: 60%;
+    max-width: 800px;
+    min-width: 400px;
+}
+
+hr
+{
+    height: 6px;
+    color: black;
+    background-color: black;
+}
+
+/* Navigation bar */
+div#nav
+{
+    clear: both !important;
+    text-align: center !important;
+    line-height: 1.5 !important;
+    width: 100% !important;
+    margin-bottom: 1cm !important;
+}
+div#nav a
+{
+    font-weight: normal !important;
+}
+div#nav table
+{
+    width: 100%;
+}
+div#nav td
+{
+    vertical-align: bottom !important;
+}
+div#nav ul
+{
+    font-family: futura-condensedlight !important;
+    list-style-type: none !important;
+    font-size: 20px !important;
+    text-transform: uppercase !important;
+}
+div#nav ul li
+{
+    display: inline !important;
+    padding-left: 10px !important;
+}
+div#nav homebutton
+{
+    font-family: bebas !important; 
+    font-size: 80px !important;
+    letter-spacing: 1px !important;
+    text-transform: uppercase !important;
+    padding-bottom: 20px !important;
+}
+/* Always include scroll to stop shift */
+html{ overflow-y:scroll; }
+
+
+/* Schematic */
+div#schematic 
+{
+    width: 100%;
+}
+
+div#schematic img
+{
+    width: 100%;
+    position: relative;
+    bottom: 100px; 
+    margin-top: -100px;
+    z-index: 1000
+}
+
+/* Big links */
+.bigLink
+{
+    font-size: 30px;
+    font-family: bebas;
+    text-align: center;
+    margin-top: 20px;
+}
+
+/* Code examples */
+.code
+{
+    font-family: monospace;
+    margin-left: 50px;
+}
+div#code ul
+{
+    list-style-type: none;    
+}
+
+/* --------- COLLAPSIBLE PANELS ----------
+details, summary {display: block;}
+details.details_shim_closed > * {display: none;}
+details.details_shim_closed > summary {display: block;}
+details.details_shim_open   > summary {display: block;}
+details.details_shim_closed > summary:before {display: inline-block; content: "\25b6"; padding: 0 0.1em; margin-right: 0.4em; font-size: 0.9em;}
+details.details_shim_open   > summary:before {display: inline-block; content: "\25bc"; padding: 0; margin-right: 0.35em;}
+*/

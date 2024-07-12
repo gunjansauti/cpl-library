@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en-UK">
+<title>Contact CPL Library</title>
+
+<head>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="contact.css">
+    <link rel="shortcut icon" href="./cpl_logo.ico">
+</head>
+
+
+<body>
+
+    <div class="center">
+
+        <!--#include virtual="nav.html"-->
+
+        <h2>General enquiries</h2>
+        <p>
+            <mark class="CPL">CPL library</mark> is developed and maintained by 
+	   	    <a href="http://www.edwardsmith.co.uk">Edward Smith</a>, 
+            who is a Lecturer at Brunel University and visiting academic at Imperial College London. 
+            General comments and questions are best by email: send your message to 
+            <a href="mailto:info@cpl-library.org">info@cpl-library.org</a>.
+            If you would like to develop new coupled examples, new features or just help 
+            with <mark class="CPL">CPL library</mark> then please get in touch.
+
+        <h2>Technical support</h2>
+        <p>
+            For now, please direct support requests to 
+            <a href="mailto:info@cpl-library.org">info@cpl-library.org</a> or
+            one of the developers below.
+            We are academic researchers who are supporting
+            this free software on the side. We have tried to
+            ensure the software is fully tested, user friendly and as clearly documented
+            as possible and we will do our best to help with any problems.
+            However, please understand that it may take some time to respond.          
+            
+         </p>
+
+        <h2>Current developers</h2>
+
+        <div class="developerDiv">
+            <div id="developerImage">
+                <a href="mailto:edward.smith@brunel.ac.uk">
+                    <img src="images/Ed.jpeg" style="filter: brightness(120%)" 
+                         width=200px/>
+                </a>
+                <div class="developerImageText">
+                    Edward Smith
+                </div>
+            </div>
+    
+            <div id="developerImage">
+                <a href="mailto:a.sufian@uq.edu.au">
+                    <img src="images/adnansufian.jpg" style="filter: brightness(120%)" 
+                         width=200px/>
+                </a>
+                <div class="developerImageText">
+                    Adnan Sufian
+                </div>
+            </div>
+            
+            <div id="developerImage">
+                <a href="mailto:h.che@imperial.ac.uk">
+                    <img src="images/Hanqiao_Che_BW.jpeg" style="filter: brightness(120%)" 
+                         width=200px/>
+                </a>
+                <div class="developerImageText">
+                    Hanqiao Che
+                </div>
+            </div>
+        </div>
+
+
+        <h2>Previous developers</h2>
+        
+            <div class="developerDiv">
+
+                <div id="developerImage">
+                    <a href="mailto:eduardo.ramos-fernandez14@imperial.ac.uk">
+                        <img src="images/Edu.png" style="filter: brightness(120%)" 
+                             width=200px/>
+                    </a>
+                    <div class="developerImageText">
+                        Eduardo Ramos-Fernandez
+                    </div>
+                </div>
+
+                <div id="developerImage">
+                    <img src="images/Dave.jpg" style="filter: brightness(105%) contrast(105%)" width=300px/>
+                    <div class="developerImageText"> 
+                        David Trevelyan
+                    </div>
+                </div>
+
+        
+                <div id="developerImage">
+                    <img src="images/Lucian.png" height=100%/>
+                    <div class="developerImageText"> 
+                        Lucian Anton
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+</body>
+
+
+</html>
